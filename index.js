@@ -69,6 +69,16 @@ app.use(
   })
 );
 
+// ─── HELPER: escape HTML to prevent XSS/HTML injection ──────
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 // ─── HELPER: encrypt / decrypt a value for the client cookie ─
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 
@@ -82,15 +92,13 @@ function decryptValue(ciphertext) {
 }
 
 // ─── HELPER: send an HTML page (no template engine – keeps it simple) ───
-// NOTE (V1 – UNSAFE): username is inserted directly into HTML with NO escaping.
-//       This is intentionally vulnerable to HTML / XSS injection.
+// NOTE (V2 – SAFE): username is escaped before being inserted into HTML.
 function renderHome(res, username) {
   if (username) {
-    // ⚠️  UNSAFE – username rendered raw (HTML injection point)
     res.send(`
       <!DOCTYPE html><html><head><title>Home</title><link rel="stylesheet" href="/style.css"></head>
       <body>
-        <h1>Welcome, ${username}!</h1>
+        <h1>Welcome, ${escapeHtml(username)}!</h1>
         <a href="/members">Members Area</a><br>
         <a href="/logout">Sign Out</a>
       </body></html>
@@ -148,11 +156,10 @@ app.post("/signup", async (req, res) => {
   // Hash the password with bcrypt
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  // ⚠️  UNSAFE – username is concatenated directly into the SQL string.
-  //     This is the intentional SQL injection vulnerability for Version 1.
-  const query = `INSERT INTO users (username, password) VALUES ('${username}', '${hashedPassword}')`;
+  // SAFE – using parameterized query with placeholders (?)
+  const query = `INSERT INTO users (username, password) VALUES (?, ?)`;
 
-  db.query(query, (err) => {
+  db.query(query, [username, hashedPassword], (err) => {
     if (err) {
       console.error("Signup DB error:", err);
       return res.send(`
@@ -192,12 +199,10 @@ app.get("/login", (req, res) => {
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
-  // UNSAFE – username is concatenated directly into the SQL string.
-  const query = `SELECT * FROM users WHERE username = '${username}'`;
-  console.log("QUERY:", query);
+  // SAFE – using parameterized query with placeholder (?)
+  const query = `SELECT * FROM users WHERE username = ?`;
 
-  db.query(query, async (err, results) => {
-        console.log("RESULTS:", results);
+  db.query(query, [username], async (err, results) => {
     if (err) {
       console.error("Login DB error:", err);
       return res.redirect("/login?error=credentials");
@@ -206,11 +211,8 @@ app.post("/login", async (req, res) => {
     if (results.length === 0) return res.redirect("/login?error=credentials");
 
     const user = results[0];
-    if (results.length === 1) {
-      const passwordMatch = await bcrypt.compare(password, user.password);
-      if (!passwordMatch) return res.redirect("/login?error=credentials");
-    } 
-    req.session.username = user.username; 
+    const passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch) return res.redirect("/login?error=credentials");
 
     // Valid login – create session
     req.session.username = user.username;
@@ -230,11 +232,11 @@ app.get("/members", (req, res) => {
   const images = ["devil-may-cry-4-nero-dmc-holy.jpg", "Disco.jpg", "Dolphin.jpg"];
   const imgSrc = `/images/${images[Math.floor(Math.random() * images.length)]}`;
 
-  // ⚠️  UNSAFE – username rendered raw (HTML injection point)
+  // SAFE – username is escaped before rendering
   res.send(`
     <!DOCTYPE html><html><head><title>Members</title><link rel="stylesheet" href="/style.css"></head>
     <body>
-      <h1>Hello, ${req.session.username}!</h1>
+      <h1>Hello, ${escapeHtml(req.session.username)}!</h1>
       <img src="${imgSrc}" alt="Random Image" style="max-width:400px;"><br><br>
       <a href="/logout">Sign Out</a>
     </body></html>
